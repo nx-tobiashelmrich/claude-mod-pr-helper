@@ -259,7 +259,8 @@ test('the pane draws the review on every surface and dismisses a finding', async
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ plugin: 'mr-review', surface, component: 'Pane', requestId: 'mr-review', props: PANE_PROPS })
     expect(await ui.find({ type: 'Text', text: 'feature/user-export' })).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: /conflicts: src\/db\.ts/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /merge conflicts in 1 file/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /src\/export\.ts:5/ })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /secret-looking value/ })).toBeDefined()
     expect(await ui.find({ type: 'Button', text: /SQL injection through nameFilter/ })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /interpolated into the SQL string/ })).toBeUndefined()
@@ -287,6 +288,37 @@ test('the pane draws the review on every surface and dismisses a finding', async
   await ui.unmount()
 
   expect(seen.findings[0]?.isDismissed).toBe(true)
+})
+
+test('the re-run button starts a fresh review without going through the command', async ($, on) => {
+  const submitted: Submitted[] = []
+  const { clock, seen, session } = world(on, sampleRepo, submitted)
+  // `$.command.run` skips the calling plugin's own hooks, so a re-run routed
+  // through it would end as "no command.run hook answered it".
+  on('command.run', { command: 'mr-review' }, ($, e, next) =>
+    e.origin.kind === 'plugin' ? Promise.reject(new Error('re-run went through command.run')) : next(e),
+  )
+  await $.session.start({ cwd: REPO, surface: 'terminal', isInteractive: true })
+  await $.command.run({ command: 'mr-review', args: '--no-fetch', origin: { kind: 'composer' }, presentation: PRESENTATION })
+  await clock.settle()
+  await $.tool.call(SQL_FINDING)
+  await $.tool.call({ tool: 'mcp__mr-review__done', verdict: 'needs-work', summary: 'Fix the SQL first.' })
+  expect(seen.review?.status).toBe('done')
+
+  const ui = await $.ui.mount({ plugin: 'mr-review', surface: 'terminal', component: 'Pane', requestId: 'mr-review', props: PANE_PROPS })
+  await ui.press({ key: 'rerun' })
+  await clock.settle()
+  await ui.unmount()
+
+  expect(seen.logs).toEqual([])
+  expect(seen.review?.status).toBe('reviewing')
+  expect(seen.review?.args).toBe('--no-fetch')
+  expect(seen.review?.verdict).toBeNull()
+  expect(seen.findings).toEqual([])
+  expect(submitted).toHaveLength(2)
+  expect(submitted[1]?.text).toContain('Review merge request branch `feature/user-export`')
+  expect(session.appended().filter(row => row.door === 'note')).toHaveLength(4)
+  expect(seen.status).toContain('reviewing feature/user-export → develop · no findings yet')
 })
 
 test('outside a git repository the command explains itself and briefs nobody', async ($, on) => {

@@ -2,6 +2,12 @@
 
 One slash command that reviews the merge request you have checked out, locally, before you push the button on GitLab or GitHub.
 
+Install it from the marketplace in this repository:
+
+```
+/plugin install mr-review --marketplace nx-tobiashelmrich/claude-mod-pr-helper
+```
+
 ```
 /mr-review                 compare HEAD with develop (or the MR's own target), open the pane, start the review
 /mr-review main            compare with another target branch

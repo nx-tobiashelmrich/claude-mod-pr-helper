@@ -11,15 +11,15 @@ export function countBySeverity(findings: readonly Finding[]): Record<Severity, 
 
 export function statusLine(review: Review | null, findings: readonly Finding[]): string | undefined {
   if (review === null) return undefined
-  if (review.status === 'collecting') return 'mr-review: collecting facts…'
-  if (review.status === 'error') return `mr-review: ${review.error ?? 'failed'}`
+  if (review.status === 'collecting') return 'collecting facts…'
+  if (review.status === 'error') return review.error ?? 'failed'
   const counts = countBySeverity(findings)
   const parts = SEVERITIES.filter(severity => counts[severity] > 0).map(severity => `${counts[severity]} ${severity}`)
   const tally = parts.length === 0 ? 'no findings yet' : parts.join(' · ')
-  if (review.status === 'reviewing') return `mr-review: reviewing ${review.branch} → ${review.target} · ${tally}`
+  if (review.status === 'reviewing') return `reviewing ${review.branch} → ${review.target} · ${tally}`
   const verdict = review.verdict === null ? 'done' : review.verdict.kind
 
-  return `mr-review: ${verdict} · ${tally}`
+  return `${verdict} · ${tally}`
 }
 
 export function location(finding: Pick<Finding, 'file' | 'line'>): string {
@@ -30,7 +30,7 @@ const CHECK_GLYPH = { fail: '✗', warn: '!', ok: '✓' } as const
 
 export function summaryText(review: Review): string {
   const lines = [
-    `mr-review: ${review.branch} → ${review.target} (${review.targetRef}${review.isTargetFetched ? ', fetched' : ', local'})`,
+    `${review.branch} → ${review.target} (${review.targetRef}${review.isTargetFetched ? ', fetched' : ', local'})`,
     `${review.commits.length} commit${review.commits.length === 1 ? '' : 's'} · ${review.files.length} file${review.files.length === 1 ? '' : 's'} · +${review.insertions} −${review.deletions}` +
       (review.behind > 0 ? ` · ${review.behind} behind` : ''),
   ]

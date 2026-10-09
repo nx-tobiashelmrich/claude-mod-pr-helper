@@ -194,7 +194,7 @@ async function startReview($: EngineInterface, config: Config, rawArgs: string, 
     }))
     await refreshStatus($)
 
-    return { text: `mr-review: ${facts.error}` }
+    return { text: facts.error }
   }
 
   const started: Review = {
@@ -259,7 +259,7 @@ async function deliver($: EngineInterface, started: Review, diff: string) {
     for (const text of rows) {
       const appended = await $.session.append({ message: { type: 'user', content: [{ type: 'text', text }] } })
       if (appended.deny !== undefined) {
-        $.ui.log(`mr-review: a brief row was refused (${appended.deny}); sending it in the prompt instead`, { to: 'debug' })
+        $.ui.log(`a brief row was refused (${appended.deny}); sending it in the prompt instead`, { to: 'debug' })
         isHidden = false
         break
       }
@@ -267,7 +267,7 @@ async function deliver($: EngineInterface, started: Review, diff: string) {
     const text = isHidden ? visiblePrompt(started) : `${visiblePrompt(started)}\n\n${rows.join('\n\n')}`
     await $.prompt.submit({ text })
   } catch (error) {
-    $.ui.log(`mr-review: the review prompt was not submitted: ${error instanceof Error ? error.message : String(error)}`)
+    $.ui.log(`the review prompt was not submitted: ${error instanceof Error ? error.message : String(error)}`)
   }
 }
 
@@ -301,8 +301,12 @@ async function copyReport($: EngineInterface, surface: RenderSurface) {
   $.ui.toast(copied.isCopied ? 'MR review report copied as markdown' : `report not copied: ${copied.reason}`)
 }
 
-function rerun($: EngineInterface, args: string) {
-  void $.command.run({ command: 'mr-review', args })
+/**
+ * `$.command.run` runs through every hook but the calling plugin's own, so the
+ * pane cannot re-run /mr-review through the command; it starts the review itself.
+ */
+function rerun($: EngineInterface, config: Config, args: string) {
+  void startReview($, config, args, parseArgs(args))
 }
 
 function closePane($: EngineInterface) {
@@ -443,7 +447,7 @@ export const register: Register = (on, options) => {
         <Box flexDirection="column">
           <Text color="error">✗ {current.error ?? 'the review failed'}</Text>
           <Box marginTop={1} gap={1}>
-            <Button key="rerun" hotkey="r" label="re-run" onPress={() => rerun($, current.args)} />
+            <Button key="rerun" hotkey="r" label="re-run" onPress={() => rerun($, config, current.args)} />
             <Button key="close" hotkey="x" label="close" role="dismiss" onPress={() => closePane($)} />
           </Box>
         </Box>
@@ -470,13 +474,6 @@ export const register: Register = (on, options) => {
         {current.mr !== null && (
           <Text wrap="truncate-end">
             {cut(`${current.mr.number} ${current.mr.title}${current.mr.author === null ? '' : ` · ${current.mr.author}`}${current.mr.checks === null ? '' : ` · ${current.mr.checks}`}`, width)}
-          </Text>
-        )}
-        {current.conflicts.length === 0 ? (
-          <Text color="success">✓ merges cleanly into {current.targetRef}</Text>
-        ) : (
-          <Text color="error" wrap="truncate-end">
-            {cut(`✗ conflicts: ${current.conflicts.join(', ')}`, width)}
           </Text>
         )}
 
@@ -527,9 +524,11 @@ export const register: Register = (on, options) => {
                     {finding.severity.toUpperCase().padEnd(6)}
                   </Text>
                   {` ${finding.category.padEnd(15)} `}
-                  <Text dimColor>{cut(location(finding), 34)}</Text>
-                  {` ${cut(finding.title, Math.max(12, width - 64))}`}
+                  {cut(finding.title, Math.max(12, width - 30))}
                 </Button>
+                <Text dimColor wrap="truncate-end">
+                  {cut(`     ${location(finding)}`, width)}
+                </Text>
                 {isChosen && (
                   <Box flexDirection="column" paddingLeft={2} marginBottom={1}>
                     <Text wrap="wrap">{finding.detail}</Text>
@@ -560,7 +559,7 @@ export const register: Register = (on, options) => {
         )}
 
         <Box gap={1} marginTop={1}>
-          <Button key="rerun" hotkey="r" label="re-run" onPress={() => rerun($, current.args)} />
+          <Button key="rerun" hotkey="r" label="re-run" onPress={() => rerun($, config, current.args)} />
           <Button key="copy" hotkey="c" label="copy report" onPress={press => copyReport($, press.surface)} />
           <Button key="close" hotkey="x" label="close" role="dismiss" onPress={() => closePane($)} />
         </Box>
