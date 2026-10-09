@@ -75,6 +75,20 @@ export type Review = {
   error: string | null
 }
 
+/** What the model hands `mcp__mr-review__finding`; the hook validates it. */
+export type FindingInput = {
+  file: string
+  line?: number | string
+  severity: string
+  category: string
+  title: string
+  detail: string
+  suggestion?: string
+}
+
+/** What the model hands `mcp__mr-review__done`. */
+export type DoneInput = { verdict: string; summary: string }
+
 declare module 'claude-code' {
   interface PluginState {
     'mr-review': {
@@ -82,5 +96,11 @@ declare module 'claude-code' {
       findings: Finding[]
       selected: string | null
     }
+  }
+
+  // The tools the mod registers in startReview, so `tool.call` on their names type-checks.
+  interface McpToolInputs {
+    'mcp__mr-review__finding': FindingInput
+    'mcp__mr-review__done': DoneInput
   }
 }
