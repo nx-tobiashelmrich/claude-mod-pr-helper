@@ -1,6 +1,6 @@
 {
   "name": "mr-review",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "author": { "name": "Tobias Helmrich" },
   "description": "One command that reviews the checked-out merge request branch against its target: merge conflicts, pre-checks for secrets and risky patterns, and Claude's findings in a live pane.",
   "types": "./types/index.d.ts",
