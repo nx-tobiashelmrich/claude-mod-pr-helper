@@ -28,7 +28,10 @@ const CATEGORY: Category[] = ['security', 'performance', 'correctness', 'merge',
 const FINDING_SCHEMA = {
   type: 'object',
   properties: {
-    file: { type: 'string', description: 'Path relative to the repository root' },
+    file: {
+      type: 'string',
+      description: 'Path relative to the repository root; leave out for a finding about the whole branch (commit history, merge state)',
+    },
     line: {
       type: 'integer',
       description: 'Line number on the new side of the diff; leave out when the finding is not tied to one line',
@@ -39,7 +42,7 @@ const FINDING_SCHEMA = {
     detail: { type: 'string', description: 'What is wrong and why it matters, citing the code' },
     suggestion: { type: 'string', description: 'The concrete change that fixes it' },
   },
-  required: ['file', 'severity', 'category', 'title', 'detail'],
+  required: ['severity', 'category', 'title', 'detail'],
 }
 
 const DONE_SCHEMA = {
@@ -107,6 +110,7 @@ function blank(args: string, cwd: string, startedAt: number): Review {
     deletions: 0,
     diffChars: 0,
     isDiffTruncated: false,
+    diffNotes: [],
     conflicts: [],
     checks: [],
     mr: null,
@@ -135,7 +139,6 @@ export function parseFinding(input: Record<string, unknown>): Omit<Finding, 'id'
   const detail = (str(input, 'detail') ?? '').trim()
   const severity = str(input, 'severity')
   const category = str(input, 'category')
-  if (file === '') return 'file is required'
   if (title === '') return 'title is required'
   if (detail === '') return 'detail is required'
   if (!isSeverity(severity)) return `severity must be one of ${SEVERITY.join(', ')}`
@@ -215,6 +218,7 @@ async function startReview($: EngineInterface, config: Config, rawArgs: string, 
     deletions: facts.deletions,
     diffChars: facts.diffChars,
     isDiffTruncated: facts.isDiffTruncated,
+    diffNotes: facts.diffNotes,
     conflicts: facts.conflicts,
     checks: runChecks(facts),
     mr,
@@ -406,7 +410,11 @@ export const register: Register = (on, options) => {
     const counts = countBySeverity(list)
     $.ui.toast(`MR review: ${kind} · ${counts.high} high, ${counts.medium} medium, ${counts.low} low`)
 
-    return { result: `Verdict recorded: ${kind}. ${list.length} finding(s) are in the pane. Now give the person a short recap.` }
+    return {
+      result:
+        `Verdict recorded: ${kind}. ${list.length} finding(s) are in the pane, so do not repeat them. ` +
+        'Give the person a recap of at most five lines: the verdict, what must change before merging, and anything you could not verify.',
+    }
   })
 
   on('turn.complete', async ($, e, next) => {

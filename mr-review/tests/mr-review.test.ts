@@ -1,8 +1,8 @@
 import type { On, ProcessRunResult } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 
-import { addedLines, runChecks } from '../hooks/checks'
-import { parseMergeTree } from '../hooks/collect'
+import { addedLines, isWipSubject, runChecks } from '../hooks/checks'
+import { parseMergeTree, pruneDiff } from '../hooks/collect'
 import type { Facts } from '../hooks/collect'
 import { parseArgs, parseFinding } from '../hooks/register'
 import type { Finding, Review } from '../types'
@@ -34,6 +34,14 @@ const DIFF = [
   "+  console.log('exporting', nameFilter)",
   "+  return query(`SELECT id FROM users WHERE name LIKE '%${nameFilter}%'`)",
   '+}',
+  'diff --git a/package-lock.json b/package-lock.json',
+  'index 4444444..5555555 100644',
+  '--- a/package-lock.json',
+  '+++ b/package-lock.json',
+  '@@ -1,3 +1,3 @@',
+  ' {',
+  '-  "lockfileVersion": 2,',
+  '+  "lockfileVersion": 3, LOCKFILE_HUNK',
   '',
 ].join('\n')
 
@@ -75,8 +83,8 @@ function sampleRepo(argv: readonly string[]): ProcessRunResult {
       ].join('\n'),
     )
   }
-  if (line.startsWith('git diff --numstat')) return ok('1\t1\tsrc/db.ts\n6\t0\tsrc/export.ts')
-  if (line.startsWith('git diff --name-status')) return ok('M\tsrc/db.ts\nA\tsrc/export.ts')
+  if (line.startsWith('git diff --numstat')) return ok('1\t1\tsrc/db.ts\n6\t0\tsrc/export.ts\n1\t1\tpackage-lock.json')
+  if (line.startsWith('git diff --name-status')) return ok('M\tsrc/db.ts\nA\tsrc/export.ts\nM\tpackage-lock.json')
   if (line.startsWith('git merge-tree')) {
     return fail(1, '07dbbe0\nsrc/db.ts\n\nAuto-merging src/db.ts\nCONFLICT (content): Merge conflict in src/db.ts')
   }
@@ -175,8 +183,9 @@ test('/mr-review collects the facts, runs the pre-checks and briefs the model', 
   expect(review?.behind).toBe(2)
   expect(review?.conflicts).toEqual(['src/db.ts'])
   expect(review?.commits.map(commit => commit.hash)).toEqual(['bf8f84e', 'dacbc25', '33c090f'])
-  expect(review?.files.map(file => `${file.status} ${file.path}`)).toEqual(['M src/db.ts', 'A src/export.ts'])
-  expect(review?.insertions).toBe(7)
+  expect(review?.files.map(file => `${file.status} ${file.path}`)).toEqual(['M src/db.ts', 'A src/export.ts', 'M package-lock.json'])
+  expect(review?.insertions).toBe(8)
+  expect(review?.diffNotes).toEqual(['package-lock.json: lockfile, hunks left out'])
   expect(review?.mr).toBeNull()
 
   const levels = new Map(review?.checks.map(check => [check.id, check.level]))
@@ -187,6 +196,7 @@ test('/mr-review collects the facts, runs the pre-checks and briefs the model', 
   expect(levels.get('debug')).toBe('warn')
   expect(levels.get('commits')).toBe('warn')
   expect(levels.get('tests')).toBe('warn')
+  expect(levels.get('lockfiles')).toBe('warn')
 
   expect(seen.logs).toEqual([])
   expect(submitted).toHaveLength(1)
@@ -199,7 +209,10 @@ test('/mr-review collects the facts, runs the pre-checks and briefs the model', 
   const texts = rows.map(row => row.message.content.map(block => ('text' in block ? block.text : '')).join(''))
   expect(texts[0]).toContain('mcp__mr-review__finding')
   expect(texts[0]).toContain('CONFLICTS in src/db.ts')
+  expect(texts[0]).toContain('package-lock.json: lockfile, hunks left out')
   expect(texts[1]).toContain(FAKE_STRIPE_KEY)
+  expect(texts[1]).not.toContain('LOCKFILE_HUNK')
+  expect(texts[1]).toContain('diff --git a/package-lock.json b/package-lock.json\n(hunks left out: lockfile)')
   expect(rows.every(row => row.message.type === 'user')).toBe(true)
   expect(seen.status).toContain('reviewing feature/user-export → develop')
 })
@@ -360,6 +373,7 @@ test('arguments, merge-tree output, diff lines and tool input parse as documente
     'src/export.ts:4',
     'src/export.ts:5',
     'src/export.ts:6',
+    'package-lock.json:2',
   ])
 
   const facts: Facts = {
@@ -386,6 +400,7 @@ test('arguments, merge-tree output, diff lines and tool input parse as documente
     diff: '',
     diffChars: 0,
     isDiffTruncated: false,
+    diffNotes: [],
   }
   const levels = new Map(runChecks(facts).map(check => [check.id, check.level]))
   expect(levels.get('conflicts')).toBe('ok')
@@ -407,4 +422,30 @@ test('arguments, merge-tree output, diff lines and tool input parse as documente
     suggestion: null,
   })
   expect(parseFinding({ file: 'a.ts', severity: 'low', category: 'style', title: 't', detail: 'd' })).toContain('category must be one of')
+  const branchWide = parseFinding({ severity: 'low', category: 'merge', title: 'Squash the fixups', detail: 'd' })
+  expect(typeof branchWide === 'string' ? branchWide : branchWide.file).toBe('')
+
+  // Conventional commits are not unfinished work; bare "fix" or "wip" subjects are.
+  expect(isWipSubject('fix(links): tighten CTA and rich-text link handling')).toBe(false)
+  expect(isWipSubject('fix: keep slash-less CMS paths internal')).toBe(false)
+  expect(isWipSubject('test!: drop the legacy routing spec')).toBe(false)
+  expect(isWipSubject('Fix the locale cookie sync after hydration')).toBe(false)
+  expect(isWipSubject('fix')).toBe(true)
+  expect(isWipSubject('fix stuff')).toBe(true)
+  expect(isWipSubject('Fix tests')).toBe(true)
+  expect(isWipSubject('WIP: locale routing')).toBe(true)
+  expect(isWipSubject('fixup! Add user export endpoint')).toBe(true)
+  expect(isWipSubject('...')).toBe(true)
+
+  const big = `diff --git a/src/huge.ts b/src/huge.ts\n+++ b/src/huge.ts\n${'+x\n'.repeat(20_000)}`
+  const pruned = pruneDiff(`${DIFF}\n${big}diff --git a/dist/app.min.js b/dist/app.min.js\n+++ b/dist/app.min.js\n+minified\n`)
+  expect(pruned.notes).toEqual([
+    'package-lock.json: lockfile, hunks left out',
+    `src/huge.ts: ${big.length} characters, cut after 30000`,
+    'dist/app.min.js: generated file, hunks left out',
+  ])
+  expect(pruned.diff).not.toContain('minified')
+  expect(pruned.diff).toContain('run git diff for the rest')
+  expect(pruned.diff).toContain(FAKE_STRIPE_KEY)
+  expect(pruneDiff('')).toEqual({ diff: '', notes: [] })
 })

@@ -9,6 +9,10 @@ export type Git = (args: readonly string[], timeoutMs?: number) => Promise<Run>
 
 /** The most of the diff handed to the model, in characters. */
 export const DIFF_LIMIT = 300_000
+/** The most of one file's diff handed to the model; the rest it reads with git when it matters. */
+export const FILE_DIFF_LIMIT = 30_000
+export const LOCKFILE = /(^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|bun\.lockb?|composer\.lock|Gemfile\.lock|poetry\.lock|Pipfile\.lock|Cargo\.lock|go\.sum|mix\.lock)$/
+const GENERATED = /\.(min\.js|min\.css|map|snap)$|(^|\/)(dist|build|out|coverage|__snapshots__)\//
 
 export type Facts = {
   root: string
@@ -28,6 +32,8 @@ export type Facts = {
   diff: string
   diffChars: number
   isDiffTruncated: boolean
+  /** Files whose hunks were dropped or cut from the diff handed to the model, one note each. */
+  diffNotes: string[]
 }
 
 export type CollectOptions = { target: string; remote: string; fetch: boolean }
@@ -98,7 +104,8 @@ export async function collectFacts(git: Git, options: CollectOptions): Promise<F
 
   const files = parseFiles(numstat.out, status.out)
   const { conflicts, mergeNote } = parseMergeTree(merge)
-  const isDiffTruncated = diffRun.out.length > DIFF_LIMIT
+  const pruned = pruneDiff(diffRun.out)
+  const isDiffTruncated = pruned.diff.length > DIFF_LIMIT
 
   return {
     root,
@@ -115,10 +122,40 @@ export async function collectFacts(git: Git, options: CollectOptions): Promise<F
     deletions: files.reduce((sum, file) => sum + file.removed, 0),
     conflicts,
     mergeNote,
-    diff: isDiffTruncated ? diffRun.out.slice(0, DIFF_LIMIT) : diffRun.out,
-    diffChars: diffRun.out.length,
+    diff: isDiffTruncated ? pruned.diff.slice(0, DIFF_LIMIT) : pruned.diff,
+    diffChars: pruned.diff.length,
     isDiffTruncated,
+    diffNotes: pruned.notes,
   }
+}
+
+/**
+ * Drops lockfile and generated-file hunks from the diff and cuts any one file
+ * to FILE_DIFF_LIMIT characters, so the model's context holds the code that
+ * needs reading. The pre-checks still see the full diff through `files`.
+ */
+export function pruneDiff(diff: string): { diff: string; notes: string[] } {
+  if (diff === '') return { diff, notes: [] }
+  const sections = diff.split(/^(?=diff --git )/m)
+  const notes: string[] = []
+  const kept: string[] = []
+  for (const section of sections) {
+    const header = /^diff --git a\/(.*?) b\/(.*)$/m.exec(section)
+    const path = header?.[2] ?? header?.[1] ?? ''
+    if (path !== '' && (LOCKFILE.test(path) || GENERATED.test(path))) {
+      notes.push(`${path}: ${LOCKFILE.test(path) ? 'lockfile' : 'generated file'}, hunks left out`)
+      kept.push(`${section.split('\n')[0] ?? ''}\n(hunks left out: ${LOCKFILE.test(path) ? 'lockfile' : 'generated file'})\n`)
+      continue
+    }
+    if (section.length > FILE_DIFF_LIMIT) {
+      notes.push(`${path}: ${section.length} characters, cut after ${FILE_DIFF_LIMIT}`)
+      kept.push(`${section.slice(0, FILE_DIFF_LIMIT)}\n(cut: ${section.length - FILE_DIFF_LIMIT} more characters of ${path}; run git diff for the rest)\n`)
+      continue
+    }
+    kept.push(section)
+  }
+
+  return { diff: kept.join(''), notes }
 }
 
 export function parseCommits(text: string): Commit[] {

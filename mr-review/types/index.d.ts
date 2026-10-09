@@ -12,6 +12,7 @@ export type Finding = {
   id: string
   severity: Severity
   category: Category
+  /** '' when the finding is about the whole branch rather than one file. */
   file: string
   line: number | null
   title: string
@@ -68,6 +69,8 @@ export type Review = {
   deletions: number
   diffChars: number
   isDiffTruncated: boolean
+  /** Files whose hunks were left out of or cut from the diff handed to the model. */
+  diffNotes: string[]
   conflicts: string[]
   checks: Check[]
   mr: MrInfo | null
@@ -77,7 +80,8 @@ export type Review = {
 
 /** What the model hands `mcp__mr-review__finding`; the hook validates it. */
 export type FindingInput = {
-  file: string
+  /** Empty or missing for a finding about the whole branch (history, merge state). */
+  file?: string
   line?: number | string
   severity: string
   category: string

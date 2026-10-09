@@ -23,6 +23,8 @@ export function statusLine(review: Review | null, findings: readonly Finding[]):
 }
 
 export function location(finding: Pick<Finding, 'file' | 'line'>): string {
+  if (finding.file === '') return 'whole branch'
+
   return finding.line === null ? finding.file : `${finding.file}:${finding.line}`
 }
 
@@ -111,15 +113,19 @@ export function buildBrief(review: Review): string {
     '',
     'Rules:',
     '- Start from the diff below. Read surrounding code with your tools when a judgment depends on it (callers, existing helpers, how parameters are escaped). Paths in the diff are relative to the repository root above; use absolute paths when it differs from your working directory.',
-    '- Report EVERY finding by calling the `mcp__mr-review__finding` tool once per finding: file, line (on the new side of the diff), severity, category, a one-line title, a detail that cites the code, and a concrete suggestion. Findings only mentioned in prose do not reach the review pane.',
-    '- Severity: high = must be fixed before merging; medium = should be fixed; low = worth doing.',
+    '- Report EVERY finding by calling the `mcp__mr-review__finding` tool once per finding: file, line (on the new side of the diff), severity, category, a one-line title, a detail that cites the code, and a concrete suggestion. Leave `file` out for a finding about the whole branch (history, merge state). Findings only mentioned in prose do not reach the review pane.',
+    '- Severity, judged by what happens if it merges as is: high = a security hole, data loss, a broken build or merge, or a crash on a main path; medium = a regression or defect users will hit, or missing error handling on a real path; low = an edge case, a gap in tests or docs, or maintainability. Use the same bar every time, so two runs on the same diff agree.',
     '- The pre-checks above are regex matches. Verify each in the code; report the real ones as findings too, so the pane holds everything, and ignore the false positives.',
-    '- Skip style nits unless they hide a defect. Do not edit files during the review.',
-    '- When done, call `mcp__mr-review__done` with a verdict (ready, needs-work or blocked) and a two to three sentence summary, then give the person a short recap in prose.',
+    '- Skip style nits unless they hide a defect. Do not edit files during the review. Do not install packages or wait for the person; when something cannot be verified from the checkout, say so in the finding and move on.',
+    '- Run the repository\'s own quick checks (lint, typecheck, unit tests) when a script for them exists; a failure is a finding.',
+    '- When done, call `mcp__mr-review__done` with a verdict (ready, needs-work or blocked) and a two to three sentence summary. Then give the person a recap of at most five lines: the verdict, what must change before merging, and anything you could not verify. The findings are in the pane; do not repeat them.',
     '',
     review.isDiffTruncated
       ? `The diff (${review.diffChars} characters) was cut after the first part; run \`git diff ${review.base} HEAD\` for the rest.`
       : '',
+    ...(review.diffNotes.length === 0
+      ? []
+      : ['Left out of the diff below (read them with git if a judgment depends on them):', ...review.diffNotes.map(note => `- ${note}`)]),
   ].join('\n')
 }
 

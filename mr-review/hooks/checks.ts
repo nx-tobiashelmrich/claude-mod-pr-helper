@@ -1,4 +1,5 @@
 import type { Check, CheckLevel } from '../types'
+import { LOCKFILE } from './collect'
 import type { Facts } from './collect'
 
 export type AddedLine = { file: string; line: number; text: string }
@@ -7,7 +8,6 @@ type Pattern = { name: string; re: RegExp }
 
 const MAX_HITS = 6
 
-const LOCKFILE = /(^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|bun\.lockb?|composer\.lock|Gemfile\.lock|poetry\.lock|Pipfile\.lock|Cargo\.lock|go\.sum|mix\.lock)$/
 const ENV_FILE = /(^|\/)\.env(\.[^/]+)?$/
 const ENV_FILE_OK = /\.env\.(example|sample|template|dist)$/
 const MIGRATION = /(^|\/)(migrations?|migrate|db\/migrate|alembic\/versions)\/|\.sql$/i
@@ -79,7 +79,16 @@ const DEBUG: Pattern[] = [
 
 const PRINT = /^\s*print\s*\(/
 const TODO = /\b(?:TODO|FIXME|HACK|XXX)\b/
-const WIP_SUBJECT = /^(?:wip\b|fixup!|squash!|tmp\b|temp\b|test\b|fix\b|\.+$|asdf|foo\b)/i
+const WIP_SUBJECT = /^(?:wip\b|fixup!|squash!|tmp\b|temp\b|\.+$|asdf\b|foo\b)/i
+/** A bare "fix", "fix stuff" or "test" is unfinished work; "fix(links): …" and "fix: …" are conventional commits. */
+const BARE_FIX = /^(?:fix|fixes|test|tests|update|updates|changes|stuff|misc)\b(?![(:!])/i
+
+export function isWipSubject(subject: string): boolean {
+  const trimmed = subject.trim()
+  if (WIP_SUBJECT.test(trimmed)) return true
+
+  return BARE_FIX.test(trimmed) && trimmed.split(/\s+/).length <= 3
+}
 
 /** The lines a unified diff adds, each with the file and its line number on the new side. */
 export function addedLines(diff: string): AddedLine[] {
@@ -179,12 +188,12 @@ export function runChecks(facts: Facts): Check[] {
   const bigFiles = facts.files.filter(file => file.added > 800)
   if (bigFiles.length > 0) push('big-files', 'warn', 'files with more than 800 added lines', list(bigFiles.map(file => `${file.path} (+${file.added})`)))
 
-  const churn = facts.insertions + facts.deletions
-  if (churn > 1000 || facts.files.length > 40) {
-    push('size', 'warn', `large change: ${facts.files.length} files, ${churn} lines`, 'consider splitting; big merge requests hide defects')
+  // Deleted lines are cheap to review, so size goes by what was added.
+  if (facts.insertions > 800 || facts.files.length > 40) {
+    push('size', 'warn', `large change: ${facts.files.length} files, +${facts.insertions} −${facts.deletions}`, 'consider splitting; big merge requests hide defects')
   }
 
-  const wip = facts.commits.filter(commit => WIP_SUBJECT.test(commit.subject.trim()))
+  const wip = facts.commits.filter(commit => isWipSubject(commit.subject))
   if (wip.length > 0) push('commits', 'warn', `${wip.length} WIP or fixup commit${wip.length === 1 ? '' : 's'}`, list(wip.map(commit => `${commit.hash} ${commit.subject}`)))
   if (facts.mergeCommits > 0) push('merges', 'warn', `${facts.mergeCommits} merge commit${facts.mergeCommits === 1 ? '' : 's'} in the branch`, 'rebase for a linear history if your team squashes or rebases')
 
@@ -196,6 +205,7 @@ export function runChecks(facts: Facts): Check[] {
   if (facts.isDiffTruncated) {
     push('diff-size', 'warn', 'diff cut for the model', `${facts.diffChars} characters; the model reads the first ${facts.diff.length} and must use git for the rest`)
   }
+  if (facts.diffNotes.length > 0) push('diff-pruned', 'ok', `${facts.diffNotes.length} file${facts.diffNotes.length === 1 ? '' : 's'} left out of the diff handed to the model`, list(facts.diffNotes))
 
   const rank: Record<CheckLevel, number> = { fail: 0, warn: 1, ok: 2 }
 
