@@ -1,0 +1,27 @@
+{
+  "name": "mr-review",
+  "version": "0.1.0",
+  "author": { "name": "Tobias Helmrich" },
+  "description": "One command that reviews the checked-out merge request branch against its target: merge conflicts, pre-checks for secrets and risky patterns, and Claude's findings in a live pane.",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "targetBranch": {
+      "type": "string",
+      "title": "Target branch",
+      "description": "The branch the merge request targets when /mr-review is run without one.",
+      "default": "develop"
+    },
+    "remote": {
+      "type": "string",
+      "title": "Remote",
+      "description": "The remote the target branch is fetched from before comparing.",
+      "default": "origin"
+    },
+    "fetch": {
+      "type": "boolean",
+      "title": "Fetch before review",
+      "description": "Run git fetch for the target branch so the conflict check uses the remote's state.",
+      "default": true
+    }
+  }
+}

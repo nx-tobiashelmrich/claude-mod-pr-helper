@@ -1,0 +1,12 @@
+{
+  "name": "claude-mod-pr-helper",
+  "owner": { "name": "Tobias Helmrich" },
+  "description": "Claude Code mods by Tobias Helmrich: local merge request review and whatever comes next.",
+  "plugins": [
+    {
+      "name": "mr-review",
+      "source": "./mr-review",
+      "description": "One command that reviews the checked-out merge request branch locally: conflicts, pre-checks and Claude's findings in a live pane."
+    }
+  ]
+}
